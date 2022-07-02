@@ -34,12 +34,18 @@ class CaptionData(object):
     def get_image_ids(self):
         return self.captions.keys()
 
-    def get_captions(self, image_id=None):
-        if image_id:
-            return self.captions[image_id]
-        else:
-            # flatten the captions
-            return [ item for sublist in self.captions.values() for item in sublist]
+    def get_train_captions(self):
+        captions = []
+        for image_id in self.train_images:
+            captions.extend(self.captions[image_id])
+        return captions
+
+    def get_all_captions(self):
+        # flatten the captions
+        return [ item for sublist in self.captions.values() for item in sublist]
+
+    def get_captions(self, image_id):
+        return self.captions[image_id]
 
     def build_caption_seqs(self, vocab, f_save=True, prefix='unknown'):
         caption_seqs_file_path = self.workspace_dir + '/{}-caption_sequences.pkl'.format(prefix)
@@ -340,19 +346,42 @@ class ImageFeatureExtractorVGG16(object):
     def get_feature(self, image_id):
         return self.features[image_id]
 
+    def get_feature_shape(self):
+        return next(iter(self.features.values())).shape
+
 class ImageCaptioning(object):
-    def __init__(self):
+    def __init__(self, dataset_name, model_name):
         self.data_dir = './data'
         self.workspace_dir = './workspace'
         if not os.path.exists(self.workspace_dir):
             os.makedirs(self.workspace_dir)
 
-        self.model_name_prefix = None
-        self.model = None
-        self.saved_model_loaded = False
+        self.dataset_name = dataset_name
+        self.model_name = model_name
+        self.artifacts_dir= self.workspace_dir + '/' + dataset_name + '-' + model_name
 
-    def set_model_name_prefix(self, model_name_prefix):
-        self.model_name_prefix = model_name_prefix
+        self.model = None
+
+    def load_dataset(self, dataset_name):
+        if dataset_name == 'Flickr8k':
+            self.dataset_name_base = 'Flickr8k'
+            self.caption_data = CaptionData_Flickr8k(self.data_dir, self.workspace_dir,
+                                                     limit_num_images=8000, train_data_ratio=0.8)
+        elif dataset_name.startswith('Flickr30k'):
+            self.dataset_name_base = 'Flickr30k'
+            try:
+                dataset_args = dataset_name.split('_')
+                limit_num_images = int(dataset_args[1])
+                train_data_ratio = float(dataset_args[2])
+            except:
+                limit_num_images = 30000
+                train_data_ratio = 0.8
+
+            self.caption_data = CaptionData_Flickr30k(self.data_dir, self.workspace_dir,
+                                                      limit_num_images=limit_num_images,
+                                                      train_data_ratio=train_data_ratio)
+        else:
+            assert False, 'Unknown dataset_name {}'.format(dataset_name)
 
     def build_embedding_matrix(self, algorithm, vocab, f_save=True, prefix='unknown'):
         embedding_matrix_file_path = self.workspace_dir + '/{}-embedding_matrix_fasttext.pkl'.format(prefix)
@@ -393,25 +422,20 @@ class ImageCaptioning(object):
                     pickle.dump(vocab, f)
         return vocab
 
-    def load_model(self):
-        latest_epoch = -1
-        for dir_name in os.listdir(self.workspace_dir):
-            if not dir_name.startswith(self.model_name_prefix):
-                continue
-            epoch = int(dir_name[len(self.model_name_prefix):])
-            if epoch > latest_epoch:
-                latest_epoch = epoch
-        if latest_epoch >= 0:
-            model_path = self.workspace_dir + '/' + self.model_name_prefix + '-' + str(latest_epoch)
-            print('Loading saved model {} ... '.format(model_path), end='')
-            model = tf.keras.models.load_model(model_path)
-            self.saved_model_loaded = True
-            print('completed')
-            return model
-        return None
+    def load_weights(self, epoch):
+        load_path = self.artifacts_dir + '/ckpt-' + str(epoch)
+        print('Loading weights {}'.format(load_path))
+        return self.model.load_weights(load_path)
 
-    def save_model(self, epoch):
-        self.model.save(self.workspace_dir + '/' + self.model_name_prefix + '-' + str(epoch))
+    def save_weights(self, epoch):
+        save_path = self.artifacts_dir + '/ckpt-' + str(epoch)
+        print('Saving weights {}'.format(save_path))
+        self.model.save_weights(save_path)
+
+    def clear_checkpoints(self):
+        if os.path.exists(self.artifacts_dir):
+            import shutil
+            shutil.rmtree(self.artifacts_dir)
 
     def train(self):
         assert False, 'must be implemented in subclasses'
@@ -419,7 +443,7 @@ class ImageCaptioning(object):
     def predict(self, image_id):
         assert False, 'must be implemented in subclasses'
 
-    def evaluate(self, image_id, show_image=False):
+    def sample_test(self, image_id, show_image=False):
         references = self.caption_data.get_captions(image_id)
         print('Predicted:', self.predict(image_id))
         print('Reference:')
@@ -434,9 +458,9 @@ class ImageCaptioning(object):
 
 
 class SimpleCallback(Callback):
-    def __init__(self):
+    def __init__(self, completed_epoch=0):
         super().__init__()
-        self.completed_epoch = 0
+        self.completed_epoch = completed_epoch
         self.completed_batch = 0
         self.losses = OrderedDict()
 

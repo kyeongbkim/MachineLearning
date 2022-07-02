@@ -21,9 +21,10 @@ from image_captioning import ImageCaptioning
 from image_captioning import ImageFeatureExtractorVGG16
 from image_captioning import SimpleCallback
 
-class ImageCaptioningWithMergedEncoderDecoder(ImageCaptioning):
+
+class ImageCaptioningWithCascadedEncoderDecoder(ImageCaptioning):
     def __init__(self, dataset_name=None):
-        super().__init__(dataset_name, 'merge')
+        super().__init__(dataset_name, 'cascade')
 
         self.load_dataset(dataset_name)
 
@@ -48,24 +49,23 @@ class ImageCaptioningWithMergedEncoderDecoder(ImageCaptioning):
         self.callback = SimpleCallback()
 
     def build_model(self):
-        inputs1 = Input(shape=(4096,))
-        fe1 = Dropout(0.5)(inputs1)
-        fe2 = Dense(256, activation='relu')(fe1)
-
         vocab_size = len(self.vocab)
         embedding_dim = self.embedding.get_embedding_dimension()
 
-        inputs2 = Input(shape=(self.caption_data.get_max_seq_len(),))
-        se1 = Embedding(vocab_size, embedding_dim,
-                        weights=[self.embedding.get_embedding_matrix()],
-                        trainable=False,
-                        mask_zero=True)(inputs2)
-        se2 = Dropout(0.5)(se1)
-        se3 = LSTM(256)(se2)
+        inputs1 = Input(shape=(4096,))
+        enc = Dropout(0.5)(inputs1)
+        enc = Dense(embedding_dim, activation='relu')(enc)
+        enc = tf.expand_dims(enc, 1)
 
-        decoder1 = Add()([fe2, se3])
-        decoder2 = Dense(256, activation='relu')(decoder1)
-        outputs = Dense(vocab_size, activation='softmax')(decoder2)
+        inputs2 = Input(shape=(self.caption_data.get_max_seq_len(),))
+        dec = Embedding(vocab_size, embedding_dim,
+                         weights=[self.embedding.get_embedding_matrix()],
+                         trainable=False,
+                         mask_zero=True)(inputs2)
+        dec = Dropout(0.5)(dec)
+        dec = LSTM(embedding_dim)(tf.concat([enc, dec], 1))
+        dec = Dense(embedding_dim, activation='relu')(dec)
+        outputs = Dense(vocab_size, activation='softmax')(dec)
 
         model = Model(inputs=[inputs1, inputs2], outputs=outputs)
         model.compile(loss='categorical_crossentropy', optimizer='adam')
