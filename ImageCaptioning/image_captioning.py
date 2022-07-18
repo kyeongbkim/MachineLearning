@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 import nltk
 import pickle
+import json
 from collections import Counter, OrderedDict
 
 import tensorflow as tf
@@ -358,7 +359,7 @@ class ImageCaptioning(object):
 
         self.dataset_name = dataset_name
         self.model_name = model_name
-        self.artifacts_dir= self.workspace_dir + '/' + dataset_name + '-' + model_name
+        self.artifacts_dir= self.workspace_dir + '/' + dataset_name + '-' + model_name + '_model'
 
         self.model = None
 
@@ -431,6 +432,28 @@ class ImageCaptioning(object):
         save_path = self.artifacts_dir + '/ckpt-' + str(epoch)
         print('Saving weights {}'.format(save_path))
         self.model.save_weights(save_path)
+
+    def save_predictions(self, epoch, data):
+        save_path = self.artifacts_dir + '/predictions-' + str(epoch) + '.json'
+        print('Saving predictions {}'.format(save_path))
+        with open(save_path, 'w') as outfile:
+            json.dump(data, outfile)
+
+    def load_predictions(self, epoch):
+        load_path = self.artifacts_dir + '/predictions-' + str(epoch) + '.json'
+        print('Loading predictions {}'.format(load_path))
+        with open(load_path, 'r') as infile:
+            return json.load(infile)
+
+    def save_eval_scores(self, epoch, df):
+        save_path = self.artifacts_dir + '/eval_scores-' + str(epoch) + '.csv'
+        print('Saving eval_scores {}'.format(save_path))
+        df.to_csv(save_path, index=False)
+
+    def load_eval_scores(self, epoch):
+        load_path = self.artifacts_dir + '/eval_scores-' + str(epoch) + '.csv'
+        print('Loading eval_scores {}'.format(load_path))
+        return pd.read_csv(load_path)
 
     def clear_checkpoints(self):
         if os.path.exists(self.artifacts_dir):
